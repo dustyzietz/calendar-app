@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Readable } from "node:stream";
 
 import { getEnv } from "@/lib/env";
 
@@ -12,7 +13,7 @@ declare global {
   var __calendarMcpClient: Promise<CalendarMcpClient> | undefined;
 }
 
-async function createClient(): Promise<CalendarMcpClient> {
+async function createClient(onClose: () => void): Promise<CalendarMcpClient> {
   const env = getEnv();
   const childEnv = Object.fromEntries(
     Object.entries({
@@ -29,7 +30,8 @@ async function createClient(): Promise<CalendarMcpClient> {
   const transport = new StdioClientTransport({
     command: env.MCP_SERVER_COMMAND,
     args: env.MCP_SERVER_ARGS.split(","),
-    env: childEnv
+    env: childEnv,
+    stderr: "pipe"
   });
 
   const client = new Client({
@@ -37,12 +39,67 @@ async function createClient(): Promise<CalendarMcpClient> {
     version: "0.1.0"
   });
 
+  const stderr = transport.stderr;
+
+  if (stderr instanceof Readable) {
+    stderr.setEncoding("utf8");
+    stderr.on("data", (chunk) => {
+      const message = chunk.toString().trim();
+
+      if (message) {
+        console.error(`[calendar-mcp] ${message}`);
+      }
+    });
+  }
+
+  transport.onclose = onClose;
+  transport.onerror = (error) => {
+    console.error("[calendar-mcp] transport error", error);
+  };
   await client.connect(transport);
+  client.onclose = onClose;
+  client.onerror = (error) => {
+    console.error("[calendar-mcp] client error", error);
+  };
 
   return { client, transport };
 }
 
+function createCachedClientPromise() {
+  const invalidateCache = () => {
+    if (globalThis.__calendarMcpClient === promise) {
+      globalThis.__calendarMcpClient = undefined;
+    }
+  };
+  const promise = createClient(invalidateCache);
+
+  promise
+    .catch((error) => {
+      invalidateCache();
+      console.error("[calendar-mcp] failed to create client", error);
+    });
+
+  return promise;
+}
+
 export async function getCalendarMcpClient() {
-  globalThis.__calendarMcpClient ??= createClient();
+  globalThis.__calendarMcpClient ??= createCachedClientPromise();
+
   return globalThis.__calendarMcpClient;
+}
+
+export async function resetCalendarMcpClient() {
+  const currentClient = globalThis.__calendarMcpClient;
+  globalThis.__calendarMcpClient = undefined;
+
+  if (!currentClient) {
+    return;
+  }
+
+  try {
+    const { client, transport } = await currentClient;
+    await Promise.allSettled([client.close(), transport.close()]);
+  } catch (error) {
+    console.error("[calendar-mcp] failed to reset client", error);
+  }
 }
