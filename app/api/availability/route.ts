@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 
 import { bookingSchema } from "@/lib/calendar/schema";
 import { checkAvailability } from "@/lib/calendar/service";
@@ -11,7 +12,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json(availability);
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ error: error.issues[0]?.message ?? "Invalid booking request." }, { status: 400 });
+    }
+
     const message = error instanceof Error ? error.message : "Unable to check availability.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    console.error("[availability] request failed", error);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
