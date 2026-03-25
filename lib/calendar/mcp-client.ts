@@ -14,17 +14,22 @@ declare global {
 
 async function createClient(): Promise<CalendarMcpClient> {
   const env = getEnv();
-  const transport = new StdioClientTransport({
-    command: env.MCP_SERVER_COMMAND,
-    args: env.MCP_SERVER_ARGS.split(","),
-    env: {
+  const childEnv = Object.fromEntries(
+    Object.entries({
       ...process.env,
+      GOOGLE_SERVICE_ACCOUNT_JSON: env.GOOGLE_SERVICE_ACCOUNT_JSON,
       GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID,
       GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET,
       GOOGLE_REFRESH_TOKEN: env.GOOGLE_REFRESH_TOKEN,
       GOOGLE_REDIRECT_URI: env.GOOGLE_REDIRECT_URI,
       GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID
-    }
+    }).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+  );
+
+  const transport = new StdioClientTransport({
+    command: env.MCP_SERVER_COMMAND,
+    args: env.MCP_SERVER_ARGS.split(","),
+    env: childEnv
   });
 
   const client = new Client({
