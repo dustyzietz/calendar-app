@@ -1,4 +1,4 @@
-import { getCalendarMcpClient } from "@/lib/calendar/mcp-client";
+import { getCalendarMcpClient, resetCalendarMcpClient } from "@/lib/calendar/mcp-client";
 import { toIsoStringInTimezone } from "@/lib/calendar/datetime";
 import type { AvailabilityResponse, BookingInput, CreateEventResponse } from "@/lib/calendar/types";
 
@@ -30,25 +30,46 @@ function parseToolText(result: unknown) {
   return text.text;
 }
 
+function isConnectionClosedError(error: unknown) {
+  return error instanceof Error && /connection closed/i.test(error.message);
+}
+
+async function callCalendarTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
+  try {
+    const { client } = await getCalendarMcpClient();
+    const result = await client.callTool({
+      name,
+      arguments: args
+    });
+
+    return JSON.parse(parseToolText(result)) as T;
+  } catch (error) {
+    if (!isConnectionClosedError(error)) {
+      throw error;
+    }
+
+    await resetCalendarMcpClient();
+
+    const { client } = await getCalendarMcpClient();
+    const result = await client.callTool({
+      name,
+      arguments: args
+    });
+
+    return JSON.parse(parseToolText(result)) as T;
+  }
+}
+
 export async function checkAvailability(input: BookingInput): Promise<AvailabilityResponse> {
-  const { client } = await getCalendarMcpClient();
-  const result = await client.callTool({
-    name: "check_availability",
-    arguments: {
+  return callCalendarTool<AvailabilityResponse>("check_availability", {
       start: toIsoStringInTimezone(input.date, input.startTime, input.timezone),
       end: toIsoStringInTimezone(input.date, input.endTime, input.timezone),
       timezone: input.timezone
-    }
   });
-
-  return JSON.parse(parseToolText(result)) as AvailabilityResponse;
 }
 
 export async function createEvent(input: BookingInput): Promise<CreateEventResponse> {
-  const { client } = await getCalendarMcpClient();
-  const result = await client.callTool({
-    name: "create_event",
-    arguments: {
+  return callCalendarTool<CreateEventResponse>("create_event", {
       summary: input.title,
       description: [input.description, input.notes ? `Notes: ${input.notes}` : ""]
         .filter(Boolean)
@@ -57,8 +78,5 @@ export async function createEvent(input: BookingInput): Promise<CreateEventRespo
       start: toIsoStringInTimezone(input.date, input.startTime, input.timezone),
       end: toIsoStringInTimezone(input.date, input.endTime, input.timezone),
       timezone: input.timezone
-    }
   });
-
-  return JSON.parse(parseToolText(result)) as CreateEventResponse;
 }
